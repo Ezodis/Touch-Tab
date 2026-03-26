@@ -5,6 +5,7 @@ class SwipeManager {
     private static let pinchThreshold: Float = 0.015
     // TODO: figure out the real value of the delay.
     private static let appSwitcherUIDelay: Double = 0.2
+    private static let forceClickStageThreshold: Int = 2
 
     private static var eventTap: CFMachPort? = nil
     // Event state.
@@ -13,6 +14,9 @@ class SwipeManager {
     private static var prevTouchPositions: [String: NSPoint] = [:]
     // Gesture state. Gesture may consists of multiple events.
     private static var startTime: Date? = nil
+    // Force click state.
+    private static var forceClickActive = false
+    private static var pressureMonitor: Any? = nil
 
     //TODO: move it somewhere else?
     private static func listener(_ eventType: EventType) {
@@ -24,9 +28,13 @@ class SwipeManager {
         case .end:
             AppSwitcher.selectInAppSwitcher()
         case .pinchIn:
-            AppSwitcher.cmdC()
-        case .pinchOut:
             AppSwitcher.cmdV()
+        case .pinchOut:
+            AppSwitcher.cmdC()
+        case .forceClick:
+            AppSwitcher.cmdBacktick()
+        case .cmdForceClick:
+            AppSwitcher.cmdShiftBacktick()
         }
     }
 
@@ -54,6 +62,21 @@ class SwipeManager {
         let runLoopSource = CFMachPortCreateRunLoopSource(nil, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, CFRunLoopMode.commonModes)
         CGEvent.tapEnable(tap: eventTap!, enable: true)
+
+        pressureMonitor = NSEvent.addGlobalMonitorForEvents(matching: .pressure) { nsEvent in
+            SwipeManager.pressureEventHandler(nsEvent)
+        }
+    }
+
+    static func stop() {
+        if let monitor = pressureMonitor {
+            NSEvent.removeMonitor(monitor)
+            pressureMonitor = nil
+        }
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            eventTap = nil
+        }
     }
     
     private static func eventHandler(proxy: CGEventTapProxy, eventType: CGEventType, cgEvent: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
@@ -136,6 +159,19 @@ class SwipeManager {
             endGesture()
             clearEventState()
             startTime = nil
+        }
+    }
+
+    private static func pressureEventHandler(_ nsEvent: NSEvent) {
+        if nsEvent.stage >= forceClickStageThreshold && !forceClickActive {
+            forceClickActive = true
+            if nsEvent.modifierFlags.contains(.command) {
+                listener(.cmdForceClick)
+            } else {
+                listener(.forceClick)
+            }
+        } else if nsEvent.stage < forceClickStageThreshold {
+            forceClickActive = false
         }
     }
 
@@ -257,6 +293,8 @@ class SwipeManager {
         case end
         case pinchIn
         case pinchOut
+        case forceClick
+        case cmdForceClick
 
         enum Direction {
             case left
