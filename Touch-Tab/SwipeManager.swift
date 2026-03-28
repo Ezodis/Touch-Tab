@@ -14,11 +14,11 @@ class SwipeManager {
     private static let forcePressureThreshold: Float = 0.99
 
     private static var eventTap: CFMachPort? = nil
-    // Separate session-level tap for force-click pressure events. Pressure events of type 34
-    // are synthesized by the system from raw trackpad HID data and are only available after
-    // that synthesis — i.e. at the session layer, not the HID layer. A second tap at
-    // .cgAnnotatedSessionEventTap is therefore required to reliably receive them.
-    private static var pressureTap: CFMachPort? = nil
+    // Global NSEvent monitor for force-click pressure events. Pressure events are synthesized
+    // by the system from raw trackpad HID data; using NSEvent.addGlobalMonitorForEvents gives
+    // us proper NSEvent objects with correct stage and pressure fields, unlike converting from
+    // a CGEvent tap which can silently return nil for these synthesized events.
+    private static var pressureEventMonitor: Any? = nil
     // Event state.
     private static var accVelX: Float = 0
     private static var accPinchDistance: Float = 0
@@ -73,32 +73,22 @@ class SwipeManager {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, CFRunLoopMode.commonModes)
         CGEvent.tapEnable(tap: eventTap!, enable: true)
 
-        // Pressure events (force click, type 34) are synthesised at the session layer, so they
-        // are not visible to the HID-level eventTap above. A dedicated session-level tap is
-        // required to intercept them.
-        pressureTap = CGEvent.tapCreate(
-            tap: .cgAnnotatedSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: NSEvent.EventTypeMask.pressure.rawValue,
-            callback: { proxy, type, cgEvent, userInfo in
-                return SwipeManager.pressureEventTapHandler(proxy: proxy, eventType: type, cgEvent: cgEvent, userInfo: userInfo)
-            },
-            userInfo: nil
-        )
-        if let pressureTap {
-            let pressureRunLoopSource = CFMachPortCreateRunLoopSource(nil, pressureTap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), pressureRunLoopSource, CFRunLoopMode.commonModes)
-            CGEvent.tapEnable(tap: pressureTap, enable: true)
-        } else {
-            debugPrint("SwipeManager couldn't create pressure event tap")
+        // Use a global NSEvent monitor for force-click pressure events. This delivers proper
+        // NSEvent objects with correct stage and pressure fields, which is more reliable than
+        // converting from a CGEvent tap (where NSEvent(cgEvent:) can silently return nil for
+        // synthesized pressure events).
+        pressureEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .pressure) { nsEvent in
+            SwipeManager.pressureEventHandler(nsEvent)
+        }
+        if pressureEventMonitor == nil {
+            debugPrint("SwipeManager couldn't create pressure event monitor")
         }
     }
 
     static func stop() {
-        if let tap = pressureTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            pressureTap = nil
+        if let monitor = pressureEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            pressureEventMonitor = nil
         }
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -116,16 +106,6 @@ class SwipeManager {
         return Unmanaged.passUnretained(cgEvent)
     }
 
-    private static func pressureEventTapHandler(proxy: CGEventTapProxy, eventType: CGEventType, cgEvent: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
-        if eventType.rawValue == NSEvent.EventType.pressure.rawValue, let nsEvent = NSEvent(cgEvent: cgEvent) {
-            pressureEventHandler(nsEvent)
-        } else if (eventType == .tapDisabledByUserInput || eventType == .tapDisabledByTimeout) {
-            debugPrint("SwipeManager pressure tap disabled", eventType.rawValue)
-            if let pressureTap { CGEvent.tapEnable(tap: pressureTap, enable: true) }
-        }
-        return Unmanaged.passUnretained(cgEvent)
-    }
-    
     private static func touchEventHandler(_ nsEvent: NSEvent) {
         let touches = nsEvent.allTouches()
 
