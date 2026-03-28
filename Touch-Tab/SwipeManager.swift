@@ -6,6 +6,12 @@ class SwipeManager {
     // TODO: figure out the real value of the delay.
     private static let appSwitcherUIDelay: Double = 0.2
     private static let forceClickStageThreshold: Int = 2
+    // Fallback pressure threshold for when "Force Click and haptic feedback" is disabled in
+    // System Settings. In that case nsEvent.stage never reaches 2, but a hard press still
+    // drives nsEvent.pressure close to 1.0, so we detect it with this threshold instead.
+    // 0.99 is chosen to be high enough to avoid accidental triggers from normal clicks
+    // (which typically reach ~0.5–0.9) while still firing reliably on a firm Force-Touch press.
+    private static let forcePressureThreshold: Float = 0.99
 
     private static var eventTap: CFMachPort? = nil
     // Event state.
@@ -111,10 +117,43 @@ class SwipeManager {
     }
 
     private static func processThreeFingers(touches: Set<NSTouch>) {
-        // Check for pinch gesture
-        if let pinchDistance = detectPinch(touches: touches) {
-            accPinchDistance += pinchDistance
-            
+        // Read pinch distance BEFORE horizontalSwipeVelocity updates prevTouchPositions.
+        let pinchDistance = detectPinch(touches: touches)
+
+        // Check for horizontal swipe (also updates prevTouchPositions).
+        let velX = SwipeManager.horizontalSwipeVelocity(touches: touches)
+
+        // Horizontal swipe takes priority over pinch. When a swipe is in progress, any
+        // minor convergence/divergence of fingers should not be mistaken for a pinch.
+        if let velX = velX {
+            accPinchDistance = 0
+
+            accVelX += velX
+            // Not enough swiping.
+            if abs(accVelX) < accVelXThreshold {
+                return
+            }
+
+            if startTime == nil {
+                startTime = Date()
+            } else {
+                let interval = startTime!.timeIntervalSinceNow
+                if -interval < appSwitcherUIDelay {
+                    // We skip subsequent events until App Switcher UI is shown.
+                    clearEventState()
+                    return
+                }
+            }
+
+            startOrContinueGesture()
+            clearEventState()
+            return
+        }
+
+        // No horizontal swipe — check for pinch gesture.
+        if let distance = pinchDistance {
+            accPinchDistance += distance
+
             if abs(accPinchDistance) >= pinchThreshold {
                 if accPinchDistance > 0 {
                     listener(.pinchOut)
@@ -122,36 +161,8 @@ class SwipeManager {
                     listener(.pinchIn)
                 }
                 clearEventState()
-                return
             }
         }
-        
-        // Check for horizontal swipe
-        let velX = SwipeManager.horizontalSwipeVelocity(touches: touches)
-        // We don't care about non-horizontal swipes.
-        if velX == nil {
-            return
-        }
-
-        accVelX += velX!
-        // Not enough swiping.
-        if abs(accVelX) < accVelXThreshold {
-            return
-        }
-
-        if startTime == nil {
-            startTime = Date()
-        } else {
-            let interval = startTime!.timeIntervalSinceNow
-            if -interval < appSwitcherUIDelay {
-                // We skip subsequent events until App Switcher UI is shown.
-                clearEventState()
-                return
-            }
-        }
-
-        startOrContinueGesture()
-        clearEventState()
     }
 
     private static func processOtherFingers() {
@@ -163,14 +174,20 @@ class SwipeManager {
     }
 
     private static func pressureEventHandler(_ nsEvent: NSEvent) {
-        if nsEvent.stage >= forceClickStageThreshold && !forceClickActive {
+        // When "Force Click and haptic feedback" is disabled in System Settings, macOS no
+        // longer advances nsEvent.stage to 2, so we also check the raw pressure value as a
+        // fallback. This lets the app react to a hard press without the system Quick Look
+        // feature being enabled.
+        let isForcePress = nsEvent.stage >= forceClickStageThreshold
+            || nsEvent.pressure >= forcePressureThreshold
+        if isForcePress && !forceClickActive {
             forceClickActive = true
             if nsEvent.modifierFlags.contains(.command) {
                 listener(.cmdForceClick)
             } else {
                 listener(.forceClick)
             }
-        } else if nsEvent.stage < forceClickStageThreshold {
+        } else if !isForcePress {
             forceClickActive = false
         }
     }
