@@ -22,7 +22,6 @@ class SwipeManager {
     private static var startTime: Date? = nil
     // Force click state.
     private static var forceClickActive = false
-    private static var pressureMonitor: Any? = nil
 
     //TODO: move it somewhere else?
     private static func listener(_ eventType: EventType) {
@@ -34,9 +33,9 @@ class SwipeManager {
         case .end:
             AppSwitcher.selectInAppSwitcher()
         case .pinchIn:
-            AppSwitcher.cmdV()
-        case .pinchOut:
             AppSwitcher.cmdC()
+        case .pinchOut:
+            AppSwitcher.cmdV()
         case .forceClick:
             AppSwitcher.cmdBacktick()
         case .cmdForceClick:
@@ -54,7 +53,7 @@ class SwipeManager {
             tap: .cghidEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: NSEvent.EventTypeMask.gesture.rawValue,
+            eventsOfInterest: NSEvent.EventTypeMask.gesture.rawValue | NSEvent.EventTypeMask.pressure.rawValue,
             callback: { proxy, type, cgEvent, userInfo in
                 return SwipeManager.eventHandler(proxy: proxy, eventType: type, cgEvent: cgEvent, userInfo: userInfo)
             },
@@ -68,17 +67,9 @@ class SwipeManager {
         let runLoopSource = CFMachPortCreateRunLoopSource(nil, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, CFRunLoopMode.commonModes)
         CGEvent.tapEnable(tap: eventTap!, enable: true)
-
-        pressureMonitor = NSEvent.addGlobalMonitorForEvents(matching: .pressure) { nsEvent in
-            SwipeManager.pressureEventHandler(nsEvent)
-        }
     }
 
     static func stop() {
-        if let monitor = pressureMonitor {
-            NSEvent.removeMonitor(monitor)
-            pressureMonitor = nil
-        }
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             eventTap = nil
@@ -88,6 +79,8 @@ class SwipeManager {
     private static func eventHandler(proxy: CGEventTapProxy, eventType: CGEventType, cgEvent: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
         if eventType.rawValue == NSEvent.EventType.gesture.rawValue, let nsEvent = NSEvent(cgEvent: cgEvent) {
             touchEventHandler(nsEvent)
+        } else if eventType.rawValue == NSEvent.EventType.pressure.rawValue, let nsEvent = NSEvent(cgEvent: cgEvent) {
+            pressureEventHandler(nsEvent)
         } else if (eventType == .tapDisabledByUserInput || eventType == .tapDisabledByTimeout) {
             debugPrint("SwipeManager tap disabled", eventType.rawValue)
             CGEvent.tapEnable(tap: eventTap!, enable: true)
