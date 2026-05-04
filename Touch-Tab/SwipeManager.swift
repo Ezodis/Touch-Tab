@@ -27,6 +27,8 @@ class SwipeManager {
     private static var startTime: Date? = nil
     // Force click state.
     private static var forceClickActive = false
+    // Pinch state: prevents repeated copy/paste triggers within a single pinch gesture.
+    private static var pinchFired = false
 
     //TODO: move it somewhere else?
     private static func listener(_ eventType: EventType) {
@@ -118,7 +120,7 @@ class SwipeManager {
         switch touchesCount {
         case 2: processTwoFingers()
         case 4: processThreeFingers(touches: touches)
-        default: processOtherFingers()
+        default: processOtherFingers(touchesCount: touchesCount)
         }
     }
 
@@ -165,7 +167,8 @@ class SwipeManager {
         if let distance = pinchDistance {
             accPinchDistance += distance
 
-            if abs(accPinchDistance) >= pinchThreshold {
+            if !pinchFired && abs(accPinchDistance) >= pinchThreshold {
+                pinchFired = true
                 if accPinchDistance > 0 {
                     listener(.pinchOut)
                 } else {
@@ -176,11 +179,14 @@ class SwipeManager {
         }
     }
 
-    private static func processOtherFingers() {
+    private static func processOtherFingers(touchesCount: Int) {
         if startTime != nil {
             endGesture()
             clearEventState()
             startTime = nil
+        }
+        if touchesCount == 0 {
+            pinchFired = false
         }
     }
 
