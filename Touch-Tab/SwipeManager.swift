@@ -185,6 +185,7 @@ class SwipeManager {
             clearEventState()
             startTime = nil
         }
+        pinchFired = false
     }
 
     private static func pressureEventHandler(_ nsEvent: NSEvent) {
