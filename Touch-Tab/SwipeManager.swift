@@ -120,7 +120,7 @@ class SwipeManager {
         switch touchesCount {
         case 2: processTwoFingers()
         case 4: processThreeFingers(touches: touches)
-        default: processOtherFingers()
+        default: processOtherFingers(touchesCount: touchesCount)
         }
     }
 
@@ -179,13 +179,15 @@ class SwipeManager {
         }
     }
 
-    private static func processOtherFingers() {
+    private static func processOtherFingers(touchesCount: Int) {
         if startTime != nil {
             endGesture()
             clearEventState()
             startTime = nil
         }
-        pinchFired = false
+        if touchesCount == 0 {
+            pinchFired = false
+        }
     }
 
     private static func pressureEventHandler(_ nsEvent: NSEvent) {
